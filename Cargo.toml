@@ -43,7 +43,7 @@ pqc = ["dep:ml-dsa", "rand", "pem", "dep:base64ct"]
 pem = ["dep:pem"]
 
 [dependencies]
-kapun-crypto-provider = { git = "https://github.com/heidiverse/kapun-sdk.git", branch = "feature/crypto-provider", default-features = false, optional = true }
+kapun-crypto-provider = { git = "https://github.com/KapunSDK/kapun-sdk.git", default-features = false, optional = true }
 ml-dsa = {version = "0.1.1", features = ["pkcs8"], optional = true}
 x25519-dalek = { version = "2.0.1", features = [
     "static_secrets",
