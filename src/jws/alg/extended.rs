@@ -11,6 +11,12 @@ use std::marker::PhantomData;
 use anyhow::anyhow;
 use digest::{const_oid::AssociatedOid, Digest, FixedOutputReset};
 
+#[cfg(feature = "kapun-provider")]
+use kapun_crypto_provider::{
+    KeyEncoding as KapunKeyEncoding, Metadata as KapunMetadata, Signer as KapunSigner,
+    Signing as KapunSigning, Verifier as KapunVerifier, Verifying as KapunVerifying,
+};
+
 use crate::jwe::alg::ecdh_es::{PrivateKey as EcPrivateKey, PublicKey as EcPublicKey};
 use crate::jwk::alg::ec::{EcCurve, EcKeyPair};
 use crate::jwk::alg::rsa::RsaKeyPair;
@@ -966,4 +972,309 @@ fn unsupported_jwk_export(message: &str) -> JoseError {
 
 fn invalid_rsa_size() -> JoseError {
     JoseError::InvalidKeyFormat(anyhow!("RSA key length must be 2048 bits or more."))
+}
+
+#[cfg(feature = "kapun-provider")]
+impl<D> KapunSigner for ExtendedRsaSigner<D> where D: ExtendedHash {}
+
+#[cfg(feature = "kapun-provider")]
+impl<D> KapunSigning for ExtendedRsaSigner<D>
+where
+    D: ExtendedHash,
+{
+    fn kapun_sign(
+        &self,
+        data: Vec<u8>,
+    ) -> Result<Vec<u8>, crate::kapun_crypto_provider::SigningProblem> {
+        self.sign(&data)
+            .map_err(|_| crate::kapun_crypto_provider::SigningProblem::SigningFailed)
+    }
+
+    fn kapun_sign_hash(
+        &self,
+        hash: Vec<u8>,
+    ) -> Result<Vec<u8>, crate::kapun_crypto_provider::SigningProblem> {
+        self.sign_prehashed(&hash)
+            .map_err(|_| crate::kapun_crypto_provider::SigningProblem::SigningFailed)
+    }
+}
+
+#[cfg(feature = "kapun-provider")]
+impl<D> KapunKeyEncoding for ExtendedRsaSigner<D>
+where
+    D: ExtendedHash,
+{
+    fn kapun_private_jwk(&self) -> Option<String> {
+        let name = self.algorithm.jose_name?;
+        let mut key_pair = RsaKeyPair::from_private_key(self.private_key.clone());
+        key_pair.set_algorithm(Some(name));
+        key_pair.set_key_id(self.key_id.clone());
+        serde_json::to_string(&key_pair.to_jwk_private_key()).ok()
+    }
+
+    fn kapun_public_jwk(&self) -> Option<String> {
+        let name = self.algorithm.jose_name?;
+        let mut jwk = crate::jwk::PublicKey::to_jwk_public_key(&self.private_key.to_public_key());
+        jwk.set_algorithm(name);
+        if let Some(key_id) = &self.key_id {
+            jwk.set_key_id(key_id);
+        }
+        serde_json::to_string(&jwk).ok()
+    }
+
+    fn kapun_private_pkcs8_der(&self) -> Option<Vec<u8>> {
+        use rsa::pkcs8::EncodePrivateKey;
+
+        Some(self.private_key.to_pkcs8_der().ok()?.as_bytes().to_vec())
+    }
+
+    fn kapun_private_pkcs8_pem(&self) -> Option<String> {
+        use rsa::pkcs8::{EncodePrivateKey, LineEnding};
+
+        Some(
+            self.private_key
+                .to_pkcs8_pem(LineEnding::CRLF)
+                .ok()?
+                .to_string(),
+        )
+    }
+
+    fn kapun_public_spki_der(&self) -> Option<Vec<u8>> {
+        use rsa::pkcs8::EncodePublicKey;
+
+        Some(
+            self.private_key
+                .to_public_key()
+                .to_public_key_der()
+                .ok()?
+                .to_vec(),
+        )
+    }
+
+    fn kapun_public_spki_pem(&self) -> Option<String> {
+        use rsa::pkcs8::{EncodePublicKey, LineEnding};
+
+        Some(
+            self.private_key
+                .to_public_key()
+                .to_public_key_pem(LineEnding::CRLF)
+                .ok()?,
+        )
+    }
+}
+
+#[cfg(feature = "kapun-provider")]
+impl<D> KapunMetadata for ExtendedRsaSigner<D>
+where
+    D: ExtendedHash,
+{
+    fn kapun_jose_alg(&self) -> Option<String> {
+        Some(self.algorithm.name().to_owned())
+    }
+}
+
+#[cfg(feature = "kapun-provider")]
+impl<D> KapunVerifier for ExtendedRsaVerifier<D> where D: ExtendedHash {}
+
+#[cfg(feature = "kapun-provider")]
+impl<D> KapunVerifying for ExtendedRsaVerifier<D>
+where
+    D: ExtendedHash,
+{
+    fn kapun_verify(
+        &self,
+        data: Vec<u8>,
+        signature: Vec<u8>,
+    ) -> Result<(), crate::kapun_crypto_provider::VerificationProblem> {
+        self.verify(&data, &signature)
+            .map_err(|_| crate::kapun_crypto_provider::VerificationProblem::SignatureInvalid)
+    }
+
+    fn kapun_verify_hash(
+        &self,
+        hash: Vec<u8>,
+        signature: Vec<u8>,
+    ) -> Result<(), crate::kapun_crypto_provider::VerificationProblem> {
+        self.verify_prehashed(&hash, &signature)
+            .map_err(|_| crate::kapun_crypto_provider::VerificationProblem::SignatureInvalid)
+    }
+}
+
+#[cfg(feature = "kapun-provider")]
+impl<D> KapunKeyEncoding for ExtendedRsaVerifier<D>
+where
+    D: ExtendedHash,
+{
+    fn kapun_public_jwk(&self) -> Option<String> {
+        let name = self.algorithm.jose_name?;
+        let mut jwk = crate::jwk::PublicKey::to_jwk_public_key(&self.public_key);
+        jwk.set_algorithm(name);
+        if let Some(key_id) = &self.key_id {
+            jwk.set_key_id(key_id);
+        }
+        serde_json::to_string(&jwk).ok()
+    }
+
+    fn kapun_public_spki_der(&self) -> Option<Vec<u8>> {
+        use rsa::pkcs8::EncodePublicKey;
+
+        Some(self.public_key.to_public_key_der().ok()?.to_vec())
+    }
+
+    fn kapun_public_spki_pem(&self) -> Option<String> {
+        use rsa::pkcs8::{EncodePublicKey, LineEnding};
+
+        Some(self.public_key.to_public_key_pem(LineEnding::CRLF).ok()?)
+    }
+}
+
+#[cfg(feature = "kapun-provider")]
+impl<D> KapunMetadata for ExtendedRsaVerifier<D>
+where
+    D: ExtendedHash,
+{
+    fn kapun_jose_alg(&self) -> Option<String> {
+        Some(self.algorithm.name().to_owned())
+    }
+}
+
+#[cfg(feature = "kapun-provider")]
+impl<D> KapunSigner for ExtendedEcdsaSigner<D> where D: ExtendedHash {}
+
+#[cfg(feature = "kapun-provider")]
+impl<D> KapunSigning for ExtendedEcdsaSigner<D>
+where
+    D: ExtendedHash,
+{
+    fn kapun_sign(
+        &self,
+        data: Vec<u8>,
+    ) -> Result<Vec<u8>, crate::kapun_crypto_provider::SigningProblem> {
+        self.sign(&data)
+            .map_err(|_| crate::kapun_crypto_provider::SigningProblem::SigningFailed)
+    }
+
+    fn kapun_sign_hash(
+        &self,
+        hash: Vec<u8>,
+    ) -> Result<Vec<u8>, crate::kapun_crypto_provider::SigningProblem> {
+        self.sign_prehashed(&hash)
+            .map_err(|_| crate::kapun_crypto_provider::SigningProblem::SigningFailed)
+    }
+}
+
+#[cfg(feature = "kapun-provider")]
+impl<D> KapunKeyEncoding for ExtendedEcdsaSigner<D>
+where
+    D: ExtendedHash,
+{
+    fn kapun_private_jwk(&self) -> Option<String> {
+        let name = self.algorithm.jose_name?;
+        let mut jwk: Jwk = serde_json::from_str(&self.private_key.ec_key_jwk().ok()?).ok()?;
+        jwk.set_algorithm(name);
+        if let Some(key_id) = &self.key_id {
+            jwk.set_key_id(key_id);
+        }
+        serde_json::to_string(&jwk).ok()
+    }
+
+    fn kapun_public_jwk(&self) -> Option<String> {
+        let name = self.algorithm.jose_name?;
+        let mut jwk: Jwk =
+            serde_json::from_str(&self.private_key.public_key().ec_key_jwk().ok()?).ok()?;
+        jwk.set_algorithm(name);
+        if let Some(key_id) = &self.key_id {
+            jwk.set_key_id(key_id);
+        }
+        serde_json::to_string(&jwk).ok()
+    }
+
+    fn kapun_private_pkcs8_der(&self) -> Option<Vec<u8>> {
+        let sec1_der = self.private_key.ec_key_der().ok()?;
+        Some(EcKeyPair::to_pkcs8(&sec1_der, false, self.algorithm.curve))
+    }
+
+    fn kapun_private_pkcs8_pem(&self) -> Option<String> {
+        let der = self.kapun_private_pkcs8_der()?;
+        Some(pem::encode(&pem::Pem::new("PRIVATE KEY", der)))
+    }
+
+    fn kapun_public_spki_der(&self) -> Option<Vec<u8>> {
+        self.private_key.public_key().ec_key_der().ok()
+    }
+
+    fn kapun_public_spki_pem(&self) -> Option<String> {
+        self.private_key.public_key().ec_key_pem().ok()
+    }
+}
+
+#[cfg(feature = "kapun-provider")]
+impl<D> KapunMetadata for ExtendedEcdsaSigner<D>
+where
+    D: ExtendedHash,
+{
+    fn kapun_jose_alg(&self) -> Option<String> {
+        Some(self.algorithm.name().to_owned())
+    }
+}
+
+#[cfg(feature = "kapun-provider")]
+impl<D> KapunVerifier for ExtendedEcdsaVerifier<D> where D: ExtendedHash {}
+
+#[cfg(feature = "kapun-provider")]
+impl<D> KapunVerifying for ExtendedEcdsaVerifier<D>
+where
+    D: ExtendedHash,
+{
+    fn kapun_verify(
+        &self,
+        data: Vec<u8>,
+        signature: Vec<u8>,
+    ) -> Result<(), crate::kapun_crypto_provider::VerificationProblem> {
+        self.verify(&data, &signature)
+            .map_err(|_| crate::kapun_crypto_provider::VerificationProblem::SignatureInvalid)
+    }
+
+    fn kapun_verify_hash(
+        &self,
+        hash: Vec<u8>,
+        signature: Vec<u8>,
+    ) -> Result<(), crate::kapun_crypto_provider::VerificationProblem> {
+        self.verify_prehashed(&hash, &signature)
+            .map_err(|_| crate::kapun_crypto_provider::VerificationProblem::SignatureInvalid)
+    }
+}
+
+#[cfg(feature = "kapun-provider")]
+impl<D> KapunKeyEncoding for ExtendedEcdsaVerifier<D>
+where
+    D: ExtendedHash,
+{
+    fn kapun_public_jwk(&self) -> Option<String> {
+        let name = self.algorithm.jose_name?;
+        let mut jwk: Jwk = serde_json::from_str(&self.public_key.ec_key_jwk().ok()?).ok()?;
+        jwk.set_algorithm(name);
+        if let Some(key_id) = &self.key_id {
+            jwk.set_key_id(key_id);
+        }
+        serde_json::to_string(&jwk).ok()
+    }
+
+    fn kapun_public_spki_der(&self) -> Option<Vec<u8>> {
+        self.public_key.ec_key_der().ok()
+    }
+
+    fn kapun_public_spki_pem(&self) -> Option<String> {
+        self.public_key.ec_key_pem().ok()
+    }
+}
+
+#[cfg(feature = "kapun-provider")]
+impl<D> KapunMetadata for ExtendedEcdsaVerifier<D>
+where
+    D: ExtendedHash,
+{
+    fn kapun_jose_alg(&self) -> Option<String> {
+        Some(self.algorithm.name().to_owned())
+    }
 }

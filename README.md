@@ -392,7 +392,11 @@ configured with the same parameters. JWK export from an algorithm-bound key
 pair or verifier returns an error unless the curve, digest and padding map to a
 JOSE-defined algorithm. Other digest crates can be used when their digest type
 implements RustCrypto's `Digest` and `FixedOutputReset` traits and has an
-associated OID.
+associated OID. Enabling `kapun-provider` alongside `extended-algorithms` also
+implements Kapun's signing, verification, metadata and key-encoding traits for
+the extended RSA and ECDSA signers and verifiers. Kapun JWK encoding returns no
+value for algorithm combinations without a JOSE mapping; DER and PEM key
+encodings remain available.
 
 ### Signing a JWT by HMAC
 
