@@ -1,7 +1,13 @@
 use anyhow::bail;
 #[cfg(feature = "kapun-provider")]
 use kapun_crypto_provider::{
-    oid_registry::OID_PKCS1_SHA1WITHRSA, DecodingError, KapunCryptoProvider,
+    oid_registry::{
+        OID_PKCS1_RSASSAPSS, OID_PKCS1_SHA1WITHRSA, OID_PKCS1_SHA224WITHRSA,
+        OID_PKCS1_SHA256WITHRSA, OID_PKCS1_SHA384WITHRSA, OID_PKCS1_SHA512WITHRSA,
+        OID_SIG_ECDSA_WITH_SHA224, OID_SIG_ECDSA_WITH_SHA256, OID_SIG_ECDSA_WITH_SHA384,
+        OID_SIG_ECDSA_WITH_SHA512,
+    },
+    DecodingError, KapunCryptoProvider,
 };
 
 #[cfg(all(feature = "rsa-sha1", feature = "kapun-provider"))]
@@ -13,6 +19,12 @@ use crate::{
 
 pub mod ecdsa;
 pub mod eddsa;
+#[cfg(all(
+    feature = "extended-algorithms",
+    feature = "rustcrypto",
+    not(feature = "openssl")
+))]
+pub mod extended;
 pub mod hmac;
 #[cfg(feature = "kapun-provider")]
 mod kapun;
@@ -273,6 +285,59 @@ impl TryFrom<&[u8]> for Box<dyn KeyPair> {
 }
 
 pub struct JosekitCryptoProvider;
+
+#[cfg(all(
+    feature = "extended-algorithms",
+    feature = "rustcrypto",
+    not(feature = "openssl"),
+    feature = "kapun-provider"
+))]
+fn extended_ecdsa_verifier_for_oid<D: extended::ExtendedHash>(
+    key_data: &[u8],
+) -> Result<Box<dyn kapun_crypto_provider::Verifier>, DecodingError> {
+    use crate::jwk::alg::ec::EcCurve;
+    use crate::jws::alg::extended::EcdsaJwsAlgorithm;
+
+    for curve in [
+        EcCurve::P256,
+        EcCurve::P384,
+        EcCurve::P521,
+        EcCurve::Secp256k1,
+    ] {
+        let algorithm = EcdsaJwsAlgorithm::<D>::new(curve);
+        if let Ok(verifier) = algorithm.verifier_from_der(key_data) {
+            return Ok(Box::new(verifier));
+        }
+    }
+    Err(DecodingError::InvalidAlgorithm)
+}
+
+#[cfg(all(
+    feature = "extended-algorithms",
+    feature = "rustcrypto",
+    not(feature = "openssl"),
+    feature = "kapun-provider"
+))]
+fn extended_ecdsa_signer_for_oid<D: extended::ExtendedHash>(
+    key_data: &[u8],
+) -> Result<Box<dyn kapun_crypto_provider::Signer>, DecodingError> {
+    use crate::jwk::alg::ec::EcCurve;
+    use crate::jws::alg::extended::EcdsaJwsAlgorithm;
+
+    for curve in [
+        EcCurve::P256,
+        EcCurve::P384,
+        EcCurve::P521,
+        EcCurve::Secp256k1,
+    ] {
+        let algorithm = EcdsaJwsAlgorithm::<D>::new(curve);
+        if let Ok(signer) = algorithm.signer_from_der(key_data) {
+            return Ok(Box::new(signer));
+        }
+    }
+    Err(DecodingError::InvalidAlgorithm)
+}
+
 #[cfg(feature = "kapun-provider")]
 impl KapunCryptoProvider for JosekitCryptoProvider {
     fn verifier(
@@ -288,6 +353,114 @@ impl KapunCryptoProvider for JosekitCryptoProvider {
         key_data: Vec<u8>,
         oid: kapun_crypto_provider::oid_registry::Oid<'a>,
     ) -> Result<Box<dyn kapun_crypto_provider::Verifier + 'a>, DecodingError> {
+        #[cfg(all(
+            feature = "extended-algorithms",
+            feature = "rustcrypto",
+            not(feature = "openssl")
+        ))]
+        {
+            use crate::jws::alg::extended::RsaJwsAlgorithm;
+            use sha1::Sha1;
+            use sha2::{Sha224, Sha256, Sha384, Sha512};
+
+            if oid == OID_PKCS1_SHA1WITHRSA {
+                return Ok(Box::new(
+                    RsaJwsAlgorithm::<Sha1>::pkcs1v15()
+                        .verifier_from_der(key_data)
+                        .map_err(|_| DecodingError::InvalidAlgorithm)?,
+                ));
+            }
+            if oid == OID_PKCS1_SHA224WITHRSA {
+                return Ok(Box::new(
+                    RsaJwsAlgorithm::<Sha224>::pkcs1v15()
+                        .verifier_from_der(key_data)
+                        .map_err(|_| DecodingError::InvalidAlgorithm)?,
+                ));
+            }
+            if oid == OID_SIG_ECDSA_WITH_SHA224 {
+                return extended_ecdsa_verifier_for_oid::<Sha224>(&key_data);
+            }
+            if oid == OID_SIG_ECDSA_WITH_SHA256 {
+                return extended_ecdsa_verifier_for_oid::<Sha256>(&key_data);
+            }
+            if oid == OID_SIG_ECDSA_WITH_SHA384 {
+                return extended_ecdsa_verifier_for_oid::<Sha384>(&key_data);
+            }
+            if oid == OID_SIG_ECDSA_WITH_SHA512 {
+                return extended_ecdsa_verifier_for_oid::<Sha512>(&key_data);
+            }
+            if oid == OID_PKCS1_RSASSAPSS {
+                // The Kapun provider API supplies the signature OID but not
+                // RSASSA-PSS parameters such as its digest and salt length.
+                return Err(DecodingError::InvalidAlgorithm);
+            }
+        }
+
+        if oid == OID_PKCS1_SHA256WITHRSA {
+            return Ok(Box::new(
+                crate::jws::RS256
+                    .verifier_from_der(key_data)
+                    .map_err(|_| DecodingError::InvalidAlgorithm)?,
+            ));
+        }
+        if oid == OID_PKCS1_SHA384WITHRSA {
+            return Ok(Box::new(
+                crate::jws::RS384
+                    .verifier_from_der(key_data)
+                    .map_err(|_| DecodingError::InvalidAlgorithm)?,
+            ));
+        }
+        if oid == OID_PKCS1_SHA512WITHRSA {
+            return Ok(Box::new(
+                crate::jws::RS512
+                    .verifier_from_der(key_data)
+                    .map_err(|_| DecodingError::InvalidAlgorithm)?,
+            ));
+        }
+
+        #[cfg(not(all(
+            feature = "extended-algorithms",
+            feature = "rustcrypto",
+            not(feature = "openssl")
+        )))]
+        {
+            if oid == OID_SIG_ECDSA_WITH_SHA256 {
+                return Ok(Box::new(
+                    crate::jws::ES256
+                        .verifier_from_der(key_data)
+                        .map_err(|_| DecodingError::InvalidAlgorithm)?,
+                ));
+            }
+            if oid == OID_SIG_ECDSA_WITH_SHA384 {
+                return Ok(Box::new(
+                    crate::jws::ES384
+                        .verifier_from_der(key_data)
+                        .map_err(|_| DecodingError::InvalidAlgorithm)?,
+                ));
+            }
+            if oid == OID_SIG_ECDSA_WITH_SHA512 {
+                return Ok(Box::new(
+                    crate::jws::ES512
+                        .verifier_from_der(key_data)
+                        .map_err(|_| DecodingError::InvalidAlgorithm)?,
+                ));
+            }
+            if oid == OID_PKCS1_SHA224WITHRSA || oid == OID_SIG_ECDSA_WITH_SHA224 {
+                return Err(DecodingError::InvalidAlgorithm);
+            }
+        }
+
+        if oid == OID_PKCS1_RSASSAPSS {
+            // The Kapun provider API supplies the signature OID but not
+            // RSASSA-PSS parameters such as its digest and salt length.
+            return Err(DecodingError::InvalidAlgorithm);
+        }
+
+        #[cfg(not(all(
+            feature = "extended-algorithms",
+            feature = "rustcrypto",
+            not(feature = "openssl")
+        )))]
         if oid == OID_PKCS1_SHA1WITHRSA {
             #[cfg(feature = "rsa-sha1")]
             {
@@ -301,6 +474,13 @@ impl KapunCryptoProvider for JosekitCryptoProvider {
         } else {
             Self::verifier(key_data)
         }
+
+        #[cfg(all(
+            feature = "extended-algorithms",
+            feature = "rustcrypto",
+            not(feature = "openssl")
+        ))]
+        Self::verifier(key_data)
     }
 
     fn signer(key_data: Vec<u8>) -> Result<Box<dyn kapun_crypto_provider::Signer>, DecodingError> {
@@ -309,6 +489,127 @@ impl KapunCryptoProvider for JosekitCryptoProvider {
             .try_into()
             .map_err(|_| DecodingError::InvalidAlgorithm)?;
         Ok(jws_signer)
+    }
+
+    fn signer_for_oid<'a>(
+        key_data: Vec<u8>,
+        oid: kapun_crypto_provider::oid_registry::Oid<'a>,
+    ) -> Result<Box<dyn kapun_crypto_provider::Signer + 'a>, DecodingError> {
+        #[cfg(all(
+            feature = "extended-algorithms",
+            feature = "rustcrypto",
+            not(feature = "openssl")
+        ))]
+        {
+            use crate::jws::alg::extended::RsaJwsAlgorithm;
+            use sha1::Sha1;
+            use sha2::{Sha224, Sha256, Sha384, Sha512};
+
+            if oid == OID_PKCS1_SHA1WITHRSA {
+                return Ok(Box::new(
+                    RsaJwsAlgorithm::<Sha1>::pkcs1v15()
+                        .signer_from_der(key_data)
+                        .map_err(|_| DecodingError::InvalidAlgorithm)?,
+                ));
+            }
+            if oid == OID_PKCS1_SHA224WITHRSA {
+                return Ok(Box::new(
+                    RsaJwsAlgorithm::<Sha224>::pkcs1v15()
+                        .signer_from_der(key_data)
+                        .map_err(|_| DecodingError::InvalidAlgorithm)?,
+                ));
+            }
+            if oid == OID_SIG_ECDSA_WITH_SHA224 {
+                return extended_ecdsa_signer_for_oid::<Sha224>(&key_data);
+            }
+            if oid == OID_SIG_ECDSA_WITH_SHA256 {
+                return extended_ecdsa_signer_for_oid::<Sha256>(&key_data);
+            }
+            if oid == OID_SIG_ECDSA_WITH_SHA384 {
+                return extended_ecdsa_signer_for_oid::<Sha384>(&key_data);
+            }
+            if oid == OID_SIG_ECDSA_WITH_SHA512 {
+                return extended_ecdsa_signer_for_oid::<Sha512>(&key_data);
+            }
+            if oid == OID_PKCS1_RSASSAPSS {
+                // The Kapun provider API supplies the signature OID but not
+                // RSASSA-PSS parameters such as its digest and salt length.
+                return Err(DecodingError::InvalidAlgorithm);
+            }
+        }
+
+        if oid == OID_PKCS1_SHA256WITHRSA {
+            return Ok(Box::new(
+                crate::jws::RS256
+                    .signer_from_der(key_data)
+                    .map_err(|_| DecodingError::InvalidAlgorithm)?,
+            ));
+        }
+        if oid == OID_PKCS1_SHA384WITHRSA {
+            return Ok(Box::new(
+                crate::jws::RS384
+                    .signer_from_der(key_data)
+                    .map_err(|_| DecodingError::InvalidAlgorithm)?,
+            ));
+        }
+        if oid == OID_PKCS1_SHA512WITHRSA {
+            return Ok(Box::new(
+                crate::jws::RS512
+                    .signer_from_der(key_data)
+                    .map_err(|_| DecodingError::InvalidAlgorithm)?,
+            ));
+        }
+
+        #[cfg(not(all(
+            feature = "extended-algorithms",
+            feature = "rustcrypto",
+            not(feature = "openssl")
+        )))]
+        {
+            if oid == OID_SIG_ECDSA_WITH_SHA256 {
+                return Ok(Box::new(
+                    crate::jws::ES256
+                        .signer_from_der(key_data)
+                        .map_err(|_| DecodingError::InvalidAlgorithm)?,
+                ));
+            }
+            if oid == OID_SIG_ECDSA_WITH_SHA384 {
+                return Ok(Box::new(
+                    crate::jws::ES384
+                        .signer_from_der(key_data)
+                        .map_err(|_| DecodingError::InvalidAlgorithm)?,
+                ));
+            }
+            if oid == OID_SIG_ECDSA_WITH_SHA512 {
+                return Ok(Box::new(
+                    crate::jws::ES512
+                        .signer_from_der(key_data)
+                        .map_err(|_| DecodingError::InvalidAlgorithm)?,
+                ));
+            }
+            if oid == OID_PKCS1_SHA224WITHRSA || oid == OID_SIG_ECDSA_WITH_SHA224 {
+                return Err(DecodingError::InvalidAlgorithm);
+            }
+        }
+
+        if oid == OID_PKCS1_RSASSAPSS {
+            // The Kapun provider API supplies the signature OID but not
+            // RSASSA-PSS parameters such as its digest and salt length.
+            return Err(DecodingError::InvalidAlgorithm);
+        }
+
+        if oid == OID_PKCS1_SHA1WITHRSA {
+            #[cfg(feature = "rsa-sha1")]
+            {
+                return Ok(Box::new(
+                    Rs1.signer_from_der(key_data)
+                        .map_err(|_| DecodingError::InvalidAlgorithm)?,
+                ));
+            }
+            #[cfg(not(feature = "rsa-sha1"))]
+            return Err(DecodingError::InvalidAlgorithm);
+        }
+        Self::signer(key_data)
     }
 }
 
