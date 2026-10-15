@@ -396,7 +396,13 @@ associated OID. Enabling `kapun-provider` alongside `extended-algorithms` also
 implements Kapun's signing, verification, metadata and key-encoding traits for
 the extended RSA and ECDSA signers and verifiers. Kapun JWK encoding returns no
 value for algorithm combinations without a JOSE mapping; DER and PEM key
-encodings remain available.
+encodings remain available. `JosekitCryptoProvider` also selects signers and
+verifiers from supported ASN.1 signature OIDs: RSA PKCS#1 with SHA-1, SHA-224,
+SHA-256, SHA-384 or SHA-512, and ECDSA with SHA-224, SHA-256, SHA-384 or
+SHA-512. For another digest implementation, select its generic
+`RsaJwsAlgorithm<D>` or `EcdsaJwsAlgorithm<D>` and create the signer or verifier
+from DER directly. OID dispatch for RSASSA-PSS is unavailable through Kapun's
+current factory interface because it does not pass the PSS parameters.
 
 ### Signing a JWT by HMAC
 

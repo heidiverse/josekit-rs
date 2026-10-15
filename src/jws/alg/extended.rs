@@ -867,27 +867,49 @@ impl<D> ExtendedEcdsaVerifier<D> {
     fn verify_digest(&self, digest: &[u8], signature: &[u8]) -> anyhow::Result<()> {
         use p256::ecdsa::signature::hazmat::PrehashVerifier;
 
+        let signature = self.signature_to_raw(signature)?;
         match &self.public_key {
             EcPublicKey::P256(key) => {
-                let sig = p256::ecdsa::Signature::from_slice(signature)?;
+                let sig = p256::ecdsa::Signature::from_slice(&signature)?;
                 p256::ecdsa::VerifyingKey::from(key.clone()).verify_prehash(digest, &sig)?;
             }
             EcPublicKey::P384(key) => {
-                let sig = p384::ecdsa::Signature::from_slice(signature)?;
+                let sig = p384::ecdsa::Signature::from_slice(&signature)?;
                 p384::ecdsa::VerifyingKey::from(key.clone()).verify_prehash(digest, &sig)?;
             }
             EcPublicKey::P521(key) => {
-                let sig = p521::ecdsa::Signature::from_slice(signature)?;
+                let sig = p521::ecdsa::Signature::from_slice(&signature)?;
                 p521::ecdsa::VerifyingKey::from_affine(key.as_affine().to_owned())?
                     .verify_prehash(digest, &sig)?;
             }
             EcPublicKey::K256(key) => {
-                let sig = k256::ecdsa::Signature::from_slice(signature)?;
+                let sig = k256::ecdsa::Signature::from_slice(&signature)?;
                 k256::ecdsa::VerifyingKey::from(key.clone()).verify_prehash(digest, &sig)?;
             }
             _ => return Err(anyhow!("The selected key is not an ECDSA key")),
         }
         Ok(())
+    }
+
+    fn signature_to_raw(&self, signature: &[u8]) -> anyhow::Result<Vec<u8>> {
+        if signature.len() == self.algorithm.curve.coordinate_size() * 2 {
+            return Ok(signature.to_vec());
+        }
+
+        Ok(match self.algorithm.curve {
+            EcCurve::P256 => p256::ecdsa::Signature::from_der(signature)?
+                .to_bytes()
+                .to_vec(),
+            EcCurve::P384 => p384::ecdsa::Signature::from_der(signature)?
+                .to_bytes()
+                .to_vec(),
+            EcCurve::P521 => p521::ecdsa::Signature::from_der(signature)?
+                .to_bytes()
+                .to_vec(),
+            EcCurve::Secp256k1 => k256::ecdsa::Signature::from_der(signature)?
+                .to_bytes()
+                .to_vec(),
+        })
     }
 }
 
