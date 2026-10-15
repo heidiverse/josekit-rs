@@ -13,6 +13,12 @@ use crate::{
 
 pub mod ecdsa;
 pub mod eddsa;
+#[cfg(all(
+    feature = "extended-algorithms",
+    feature = "rustcrypto",
+    not(feature = "openssl")
+))]
+pub mod extended;
 pub mod hmac;
 #[cfg(feature = "kapun-provider")]
 mod kapun;

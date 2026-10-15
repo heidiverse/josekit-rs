@@ -354,6 +354,46 @@ cargo publish
 
 ## Usage
 
+### Parameterized RustCrypto algorithms
+
+The `extended-algorithms` feature opts into RustCrypto RSA and ECDSA
+algorithms parameterized by a digest implementation. It does not change the
+default JOSE algorithm presets. Add a digest crate with ASN.1 OID support, then
+choose a private JWS algorithm name for combinations that are not defined by
+JOSE. The feature currently supports RSA PKCS#1 v1.5, RSA-PSS (using the same
+digest for MGF1), and ECDSA on the EC curves already supported by josekit.
+
+```toml
+[dependencies]
+josekit = { version = "0.11", default-features = false, features = ["extended-algorithms"] }
+sha2 = { version = "0.11", features = ["oid"] }
+```
+
+```rust
+use josekit::{
+    jws::{self, alg::extended::EcdsaJwsAlgorithm, JwsHeader},
+    jwk::alg::ec::EcCurve,
+    JoseError,
+};
+use sha2::Sha384;
+
+fn sign() -> Result<String, JoseError> {
+    let algorithm = EcdsaJwsAlgorithm::<Sha384>::new(EcCurve::P256)
+        .with_jws_name("private:P-256-SHA384")?;
+    let key_pair = algorithm.generate_key_pair()?;
+    let signer = algorithm.signer_from_key_pair(&key_pair)?;
+    let header = JwsHeader::new();
+    jws::serialize_compact(b"payload", &header, &signer)
+}
+```
+
+The generated JWS uses the chosen private `alg` value and requires a verifier
+configured with the same parameters. JWK export from an algorithm-bound key
+pair or verifier returns an error unless the curve, digest and padding map to a
+JOSE-defined algorithm. Other digest crates can be used when their digest type
+implements RustCrypto's `Digest` and `FixedOutputReset` traits and has an
+associated OID.
+
 ### Signing a JWT by HMAC
 
 HMAC is used to verify the integrity of a message by common secret key.

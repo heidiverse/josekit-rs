@@ -39,6 +39,7 @@ rustcrypto = [
     "rand",
     "pem",
 ]
+extended-algorithms = ["rustcrypto", "dep:digest"]
 pqc = ["dep:ml-dsa", "rand", "pem", "dep:base64ct"]
 pem = ["dep:pem"]
 
@@ -84,6 +85,7 @@ k256 = { version = "0.13.4", features = [
     "ecdsa",
 ], optional = true }
 sha2 = { version = "0.11.0-rc.3", optional = true }
+digest = { version = "0.11", default-features = false, features = ["alloc", "oid"], optional = true }
 sha1 = { version = "0.11.0-rc.3", optional = true }
 pbkdf2 = { version = "0.13.0-rc.5", optional = true }
 rsa = { version = "0.10.0-rc.18", optional = true, features = [
